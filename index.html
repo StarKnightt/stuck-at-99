@@ -1,0 +1,869 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stuck at 99%</title>
+<meta name="description" content="A tiny worker pushes an upload bar to 100%. The last percent fights back.">
+<meta property="og:title" content="Stuck at 99%">
+<meta property="og:description" content="A tiny worker pushes an upload bar to 100%. The last percent fights back.">
+<meta property="og:image" content="og.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f5f5f7;
+    --card: #ffffff;
+    --ink: #1d1d1f;
+    --ink-2: #6e6e73;
+    --ink-3: #a1a1a6;
+    --accent: #ff6b1f;
+    --s: 1;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'Bricolage Grotesque', ui-sans-serif, system-ui, sans-serif;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* The card is authored at 1000 x 540 and scaled as one piece, so the
+     character, the bar and the type always keep their proportions. */
+  .card {
+    position: fixed;
+    left: 50%; top: 50%;
+    width: 1000px; height: 540px;
+    margin: -270px 0 0 -500px;
+    background: var(--card);
+    border-radius: calc(20px / var(--s));
+    box-shadow:
+      0 0 0 calc(1px / var(--s)) rgba(0, 0, 0, .075),
+      0 1px 1px rgba(0, 0, 0, .025),
+      0 2px 4px rgba(0, 0, 0, .025),
+      0 8px 16px -4px rgba(0, 0, 0, .04),
+      0 24px 48px -12px rgba(0, 0, 0, .07),
+      0 48px 96px -24px rgba(0, 0, 0, .08);
+    transform-origin: 50% 50%;
+    will-change: transform;
+  }
+
+  .head { position: absolute; left: 64px; top: 58px; display: flex; gap: 18px; align-items: flex-start; }
+  .file { width: 40px; height: 48px; flex: none; margin-top: 1px; }
+  .swap { position: relative; }
+  .swap > * { will-change: opacity, transform; }
+  .swap > :not(:first-child) { position: absolute; left: 0; top: 0; white-space: nowrap; }
+  .title {
+    font-size: 22px; font-weight: 600; letter-spacing: -0.012em;
+    font-variation-settings: 'opsz' 24; line-height: 28px; white-space: nowrap;
+  }
+  .sub {
+    margin-top: 4px; font-size: 15.5px; font-weight: 420; color: var(--ink-2);
+    line-height: 20px; white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+  .mb { display: inline-block; min-width: 2.15em; text-align: right; }
+
+  .meter { position: absolute; right: 64px; top: 40px; height: 112px; }
+  .num, .done {
+    position: absolute; right: 0; top: 0;
+    display: flex; align-items: flex-start;
+    font-size: 104px; line-height: 112px; font-weight: 640;
+    letter-spacing: -0.05em; font-variation-settings: 'opsz' 96;
+    will-change: opacity, transform;
+  }
+  .slot {
+    display: block; width: 0.56em; height: 112px; overflow: hidden; text-align: center;
+    -webkit-mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent);
+            mask-image: linear-gradient(transparent, #000 16%, #000 84%, transparent);
+  }
+  .col { display: block; will-change: transform; }
+  .col i { display: block; height: 112px; font-style: normal; }
+  .pct {
+    font-size: 40px; line-height: 40px; font-weight: 520; color: var(--ink-3);
+    margin: 20px 0 0 2px; letter-spacing: 0; font-variation-settings: 'opsz' 40;
+  }
+  .done { gap: 14px; opacity: 0; }
+  .done svg { width: 74px; height: 74px; margin-top: 22px; overflow: visible; }
+
+  .scene { position: absolute; inset: 0; width: 1000px; height: 540px; overflow: visible; pointer-events: none; }
+
+  .mute {
+    position: fixed; right: 24px; bottom: 24px; width: 44px; height: 44px;
+    border-radius: 50%; border: 0; padding: 0; cursor: pointer; color: var(--ink);
+    background: rgba(255, 255, 255, .86);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, .08), 0 2px 8px rgba(0, 0, 0, .05);
+    display: grid; place-items: center;
+    transition: transform 160ms cubic-bezier(.23, 1, .32, 1), background 160ms ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mute:hover { background: #fff; }
+  .mute:active { transform: scale(.94); }
+  .mute:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
+  .mute svg { width: 20px; height: 20px; }
+  .mute .off { display: none; }
+  .mute[aria-pressed="true"] .on { display: none; }
+  .mute[aria-pressed="true"] .off { display: block; }
+  .capture .mute { display: none; }
+</style>
+</head>
+<body>
+
+<div class="card" id="card">
+  <div class="head">
+    <svg class="file" viewBox="0 0 40 48" aria-hidden="true">
+      <path d="M6 1.5h19.5L38.5 14.5V44a2.5 2.5 0 0 1-2.5 2.5H6A2.5 2.5 0 0 1 3.5 44V4A2.5 2.5 0 0 1 6 1.5z" fill="#f5f5f7" stroke="#d2d2d7" stroke-width="1.2"/>
+      <path d="M25.5 1.5V12a2.5 2.5 0 0 0 2.5 2.5h10.5" fill="#fff" stroke="#d2d2d7" stroke-width="1.2" stroke-linejoin="round"/>
+      <g fill="#a1a1a6">
+        <rect x="15" y="6" width="5" height="2.6" rx=".8"/><rect x="20" y="9.6" width="5" height="2.6" rx=".8"/>
+        <rect x="15" y="13.2" width="5" height="2.6" rx=".8"/><rect x="20" y="16.8" width="5" height="2.6" rx=".8"/>
+        <rect x="15" y="20.4" width="5" height="2.6" rx=".8"/><rect x="20" y="24" width="5" height="2.6" rx=".8"/>
+        <rect x="15.5" y="29" width="9" height="9" rx="2.2"/>
+      </g>
+      <rect x="18" y="33.2" width="4" height="2.4" rx="1" fill="#f5f5f7"/>
+    </svg>
+    <div>
+      <div class="swap">
+        <div class="title" id="titleA">Uploading project.zip</div>
+        <div class="title" id="titleB" style="opacity:0">Uploaded project.zip</div>
+      </div>
+      <div class="swap">
+        <div class="sub" id="subA"><span class="mb" id="mb">0</span> of 64 MB · <span id="eta">Calculating…</span></div>
+        <div class="sub" id="subB" style="opacity:0">64 MB · Just now</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="meter" aria-live="off">
+    <div class="num" id="num">
+      <span class="slot"><span class="col" id="c2"><i></i><i>1</i><i></i></span></span><span class="slot"><span class="col" id="c1"><i></i><i>1</i><i>2</i><i>3</i><i>4</i><i>5</i><i>6</i><i>7</i><i>8</i><i>9</i><i>0</i><i>1</i></span></span><span class="slot"><span class="col" id="c0"><i>0</i><i>1</i><i>2</i><i>3</i><i>4</i><i>5</i><i>6</i><i>7</i><i>8</i><i>9</i><i>0</i><i>1</i></span></span><span class="pct">%</span>
+    </div>
+    <div class="done" id="done">
+      <span>Done</span>
+      <svg viewBox="0 0 74 74" aria-hidden="true">
+        <defs><clipPath id="checkClip"><rect id="checkWipe" x="0" y="0" width="74" height="74"/></clipPath></defs>
+        <path clip-path="url(#checkClip)" d="M14 39 L30 54 L60 20" fill="none" stroke="var(--accent)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+  </div>
+
+  <svg class="scene" viewBox="0 0 1000 540" aria-hidden="true">
+    <defs>
+      <clipPath id="trackClip"><rect x="122" y="345" width="756" height="40" rx="20"/></clipPath>
+      <linearGradient id="fillGrad" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#ff8240"/>
+        <stop offset=".55" stop-color="#ff6b1f"/>
+        <stop offset="1" stop-color="#f45f12"/>
+      </linearGradient>
+      <radialGradient id="skin" cx=".42" cy=".36" r=".72">
+        <stop offset="0" stop-color="#fff4ea"/>
+        <stop offset=".7" stop-color="#f8e2d0"/>
+        <stop offset="1" stop-color="#efd1bb"/>
+      </radialGradient>
+      <linearGradient id="cloth" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#3b3b41"/>
+        <stop offset="1" stop-color="#26262b"/>
+      </linearGradient>
+      <radialGradient id="shadowGrad">
+        <stop offset="0" stop-color="#000" stop-opacity=".22"/>
+        <stop offset=".6" stop-color="#000" stop-opacity=".09"/>
+        <stop offset="1" stop-color="#000" stop-opacity="0"/>
+      </radialGradient>
+      <clipPath id="eyeClipB"><ellipse cx="0" cy="0" rx="7.2" ry="8.6"/></clipPath>
+      <clipPath id="eyeClipF"><ellipse cx="0" cy="0" rx="7.2" ry="8.6"/></clipPath>
+      <g id="drop"><path d="M0 -6 C2.6 -2.2 4.2 0.4 4.2 2.4 A4.2 4.2 0 0 1 -4.2 2.4 C-4.2 0.4 -2.6 -2.2 0 -6Z" fill="#e3ebf3" stroke="#b9c6d4" stroke-width=".9"/><ellipse cx="-1.4" cy="2" rx=".9" ry="1.4" fill="#fff"/></g>
+    </defs>
+
+    <!-- the bar -->
+    <g id="track">
+      <rect x="122" y="345" width="756" height="40" rx="20" fill="#efeff2"/>
+      <g clip-path="url(#trackClip)">
+        <rect x="122" y="345" width="756" height="3" fill="#000" opacity=".035"/>
+        <g id="fill">
+          <rect x="122" y="345" width="756" height="40" rx="20" fill="url(#fillGrad)"/>
+          <rect x="122" y="347.5" width="756" height="1.6" rx=".8" fill="#fff" opacity=".28"/>
+        </g>
+      </g>
+      <rect x="122.5" y="345.5" width="755" height="39" rx="19.5" fill="none" stroke="#000" stroke-opacity=".045"/>
+    </g>
+
+    <g id="puffs"></g>
+    <ellipse id="shadow" cx="0" cy="0" rx="1" ry="1" fill="url(#shadowGrad)"/>
+
+    <!-- the worker -->
+    <g id="worker">
+      <g id="root">
+        <g id="legB"><line x1="0" y1="0" x2="0" y2="28" stroke="#222226" stroke-width="10" stroke-linecap="round"/></g>
+        <g id="shoeB"><ellipse cx="3" cy="-1" rx="8.6" ry="5" fill="#141416"/></g>
+        <g id="legF"><line x1="0" y1="0" x2="0" y2="28" stroke="#2c2c31" stroke-width="10" stroke-linecap="round"/></g>
+        <g id="shoeF"><ellipse cx="3" cy="-1" rx="8.6" ry="5" fill="#1b1b1e"/><ellipse cx="5" cy="-3.2" rx="3.4" ry="1.3" fill="#fff" opacity=".12"/></g>
+        <g id="body">
+          <g id="armB"><line x1="0" y1="0" x2="0" y2="36" stroke="#202024" stroke-width="8.5" stroke-linecap="round"/><circle cx="0" cy="36" r="6.6" fill="#ecd2bf"/></g>
+          <rect x="-19" y="-47" width="38" height="53" rx="18" fill="url(#cloth)"/>
+          <path d="M-12 -40 Q0 -45 12 -40" stroke="#fff" stroke-opacity=".08" stroke-width="2" fill="none" stroke-linecap="round"/>
+          <g id="headPivot">
+            <g id="head">
+              <circle cx="0" cy="0" r="31" fill="url(#skin)" stroke="#000" stroke-opacity=".07" stroke-width="1"/>
+              <path d="M-3 -30.5 C-6 -39 2 -43.5 6.5 -37.5 M3 -31 C5.5 -37 11 -37 11.5 -32.5" stroke="#2c2c31" stroke-width="3.2" fill="none" stroke-linecap="round"/>
+              <g id="face">
+                <g id="eyeB">
+                  <g id="eyeBOpen">
+                    <g clip-path="url(#eyeClipB)">
+                      <ellipse cx="0" cy="0" rx="7.2" ry="8.6" fill="#fff"/>
+                      <g id="pupB"><ellipse cx="0" cy="0" rx="4.1" ry="5.1" fill="#1d1d1f"/><circle cx="1.5" cy="-1.9" r="1.45" fill="#fff"/></g>
+                      <g id="lidB"><rect x="-9" y="-28" width="18" height="19.4" fill="#f6dfcd"/><line x1="-9" y1="-8.6" x2="9" y2="-8.6" stroke="#3a2f2a" stroke-width="1.7"/></g>
+                    </g>
+                    <ellipse cx="0" cy="0" rx="7.2" ry="8.6" fill="none" stroke="#000" stroke-opacity=".14"/>
+                  </g>
+                  <path id="eyeBShut" d="M-6 0.5 Q0 4.6 6 0.5" fill="none" stroke="#3a2f2a" stroke-width="2" stroke-linecap="round" opacity="0"/>
+                  <path id="browB" d="M-5 0 L5 0" stroke="#3a2f2a" stroke-width="2.7" stroke-linecap="round"/>
+                </g>
+                <g id="eyeF">
+                  <g id="eyeFOpen">
+                    <g clip-path="url(#eyeClipF)">
+                      <ellipse cx="0" cy="0" rx="7.2" ry="8.6" fill="#fff"/>
+                      <g id="pupF"><ellipse cx="0" cy="0" rx="4.1" ry="5.1" fill="#1d1d1f"/><circle cx="1.5" cy="-1.9" r="1.45" fill="#fff"/></g>
+                      <g id="lidF"><rect x="-9" y="-28" width="18" height="19.4" fill="#f8e3d2"/><line x1="-9" y1="-8.6" x2="9" y2="-8.6" stroke="#3a2f2a" stroke-width="1.7"/></g>
+                    </g>
+                    <ellipse cx="0" cy="0" rx="7.2" ry="8.6" fill="none" stroke="#000" stroke-opacity=".14"/>
+                  </g>
+                  <path id="eyeFShut" d="M-6 0.5 Q0 4.6 6 0.5" fill="none" stroke="#3a2f2a" stroke-width="2" stroke-linecap="round" opacity="0"/>
+                  <path id="browF" d="M-5 0 L5 0" stroke="#3a2f2a" stroke-width="2.7" stroke-linecap="round"/>
+                </g>
+                <g id="mouth" transform="translate(1 14)">
+                  <path id="mSmile" d="M-7 -2.2 Q0 7 7 -2.2" fill="none" stroke="#3a2f2a" stroke-width="2.3" stroke-linecap="round"/>
+                  <g id="mGrit" opacity="0"><rect x="-7.5" y="-3.3" width="15" height="6.6" rx="3" fill="#fff" stroke="#3a2f2a" stroke-width="1.7"/><line x1="-6" y1="0" x2="6" y2="0" stroke="#3a2f2a" stroke-width=".9" stroke-opacity=".55"/></g>
+                  <ellipse id="mOpen" cx="0" cy="1" rx="4.6" ry="5.6" fill="#4b2b25" opacity="0"/>
+                  <path id="mFlat" d="M-5 0.5 L5 0.5" stroke="#3a2f2a" stroke-width="2.3" stroke-linecap="round" opacity="0"/>
+                  <ellipse id="mO" cx="0" cy="1" rx="2.7" ry="3.3" fill="#4b2b25" opacity="0"/>
+                </g>
+              </g>
+              <g id="sweat">
+                <g id="sw0"><use href="#drop"/></g>
+                <g id="sw1"><use href="#drop"/></g>
+                <g id="sw2"><use href="#drop"/></g>
+              </g>
+            </g>
+          </g>
+          <g id="armF"><line x1="0" y1="0" x2="0" y2="36" stroke="#2c2c31" stroke-width="8.5" stroke-linecap="round"/><circle cx="0" cy="36" r="6.8" fill="#f6dfcd" stroke="#000" stroke-opacity=".08"/></g>
+        </g>
+      </g>
+    </g>
+    <g id="flyDrop" opacity="0"><use href="#drop"/></g>
+  </svg>
+</div>
+
+<button class="mute" id="mute" type="button" aria-pressed="false" aria-label="Mute sound">
+  <svg class="on" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5h3l4-3.5v12l-4-3.5H3z" fill="currentColor" stroke-width="1.2"/><path d="M13.2 7.2a4 4 0 0 1 0 5.6M15.6 5a7.2 7.2 0 0 1 0 10"/></svg>
+  <svg class="off" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7.5h3l4-3.5v12l-4-3.5H3z" fill="currentColor" stroke-width="1.2"/><path d="M13.5 8l4 4M17.5 8l-4 4"/></svg>
+</button>
+
+<script>
+(() => {
+'use strict';
+
+/* ------------------------------------------------------------------ *
+ *  Everything on screen is a pure function of loop time t in [0, 10).
+ *  That keeps the loop seamless and lets a recorder step it frame by
+ *  frame. Units inside the scene are card pixels (card = 1000 x 540).
+ * ------------------------------------------------------------------ */
+
+const LOOP = 10;
+const TX = 122, TW = 756, FLOOR = 490, WS = 1.95;   // WS: worker scale          // track left, track width, floor line
+const HIP = 28, SHOULDER_F = [6, -40], SHOULDER_B = [-5, -39], ARM = 36;
+const TRACK_MID = 365;   // = FLOOR - 64 * WS: he pushes at shoulder height                          // hands aim here
+const E99 = TX + TW * 0.99;
+
+const qs = new URLSearchParams(location.search);
+const CAPTURE = qs.has('capture');
+if (CAPTURE) document.documentElement.classList.add('capture');
+
+/* ---------- easing + keyframe tracks ---------- */
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, u) => a + (b - a) * u;
+const sstep = (a, b, x) => { const u = clamp((x - a) / (b - a)); return u * u * (3 - 2 * u); };
+const EASE = {
+  l: x => x,
+  io: x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2,
+  o: x => 1 - Math.pow(1 - x, 3),
+  o5: x => 1 - Math.pow(1 - x, 5),
+  i: x => x * x,
+  i3: x => x * x * x,
+  ob: x => { const c1 = 1.9, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); },
+  h: x => (x < 1 ? 0 : 1),
+};
+// keys: [time, value, easeIntoThisKey]
+function T(keys) {
+  return t => {
+    if (t <= keys[0][0]) return keys[0][1];
+    for (let i = 1; i < keys.length; i++) {
+      const k = keys[i];
+      if (t < k[0]) {
+        const p = keys[i - 1];
+        return p[1] + (k[1] - p[1]) * EASE[k[2] || 'io']((t - p[0]) / (k[0] - p[0]));
+      }
+    }
+    return keys[keys.length - 1][1];
+  };
+}
+const damp = (t, t0, amp, freq, decay) => (t < t0 ? 0 : amp * Math.exp(-decay * (t - t0)) * Math.sin(2 * Math.PI * freq * (t - t0)));
+
+/* ---------- the story ---------- */
+// progress: hermite through (time, percent, percent/s), dead stop at 99
+const PK = [[0.40, 0, 0], [0.72, 7, 38], [2.40, 60, 27], [4.00, 90, 13], [4.62, 99, 14]];
+const POP = 7.78, DONE = 8.06, FADE_OUT = 9.30, RESET = 9.62;
+function progress(t) {
+  if (t >= RESET) return 0;
+  if (t < PK[0][0]) return 0;
+  if (t >= POP) return lerp(99, 100, EASE.o(clamp((t - POP) / 0.07)));
+  for (let i = 1; i < PK.length; i++) {
+    if (t < PK[i][0]) {
+      const [t0, p0, v0] = PK[i - 1], [t1, p1, v1] = PK[i];
+      const d = t1 - t0, u = (t - t0) / d, u2 = u * u, u3 = u2 * u;
+      return (2 * u3 - 3 * u2 + 1) * p0 + (u3 - 2 * u2 + u) * d * v0 + (-2 * u3 + 3 * u2) * p1 + (u3 - u2) * d * v1;
+    }
+  }
+  return 99;
+}
+const edgeAt = t => TX + TW * progress(t) / 100;
+
+const LEAN = T([[0, 4], [0.24, -7], [0.40, 15, 'o'], [0.72, 17], [2.40, 19], [3.10, 27], [4.00, 32], [4.62, 34],
+  [4.70, 42, 'o'], [4.86, 33], [5.15, 35, 'l'], [5.36, -5], [5.48, -2], [5.95, -3, 'l'], [6.12, 24], [6.40, 22, 'l'],
+  [6.56, 0], [7.06, 0, 'l'], [7.18, 37, 'o'], [7.38, 38, 'l'], [7.52, -15], [7.58, 9, 'o5'], [7.64, 9, 'l'],
+  [7.76, -3, 'o'], [7.86, -7, 'o'], [8.06, 0], [8.22, 5], [8.32, -4], [9.62, 4, 'h'], [10, 4]]);
+const CROUCH = T([[0, 0], [0.24, 7], [0.40, 0, 'o'], [4.62, 1], [4.70, 4, 'o'], [4.86, 1.5], [5.15, 1.5, 'l'], [5.36, 0],
+  [6.12, 5], [6.40, 5, 'l'], [6.56, 0], [7.38, 1, 'l'], [7.52, 6], [7.58, 0, 'o5'], [8.06, 0, 'l'], [8.24, 10],
+  [8.34, 9, 'l'], [9.62, 0, 'h'], [10, 0]]);
+const PUSHW = T([[0, 1], [5.15, 1, 'l'], [5.30, 0], [7.05, 0, 'l'], [7.17, 1], [7.38, 1, 'l'], [7.46, 0], [9.62, 1, 'h'], [10, 1]]);
+const STRAIN = T([[4.62, 0], [4.68, 1, 'o'], [5.12, 1, 'l'], [5.22, 0], [7.14, 0, 'l'], [7.20, 1], [7.36, 1, 'l'], [7.42, 0]]);
+const BREATH = T([[5.30, 0], [5.50, 1], [6.45, 1, 'l'], [6.65, 0]]);
+const STRIDE = T([[0, 26], [0.72, 31], [2.40, 30, 'l'], [3.60, 21], [4.62, 15], [4.70, 9], [5.15, 9, 'l'], [5.30, 18], [7.05, 18, 'l'], [7.18, 9], [9.62, 26, 'h'], [10, 26]]);
+const LIFT = T([[0, 9], [2.40, 9, 'l'], [3.60, 6], [4.62, 4], [4.70, 3], [5.20, 3, 'l'], [5.30, 6], [7.10, 6, 'l'], [7.20, 3], [9.62, 9, 'h'], [10, 9]]);
+const LEGOW = T([[7.38, 0], [7.46, 1], [9.62, 1, 'l'], [9.621, 0, 'l'], [10, 0]]);
+const LEG_F = T([[7.38, 4], [7.54, -48], [7.58, 84, 'o5'], [7.64, 84, 'l'], [7.72, 12], [7.78, 4], [7.86, -12, 'o'], [7.98, 4],
+  [8.24, 16], [8.50, 6, 'i'], [8.62, 34, 'o'], [8.82, 10], [9.06, 10, 'l'], [9.12, 26, 'o'], [9.26, 10]]);
+const LEG_B = T([[7.38, -8], [7.54, -4], [7.58, -16, 'o5'], [7.64, -16, 'l'], [7.72, -6], [7.86, 12, 'o'], [7.98, -4],
+  [8.24, -14], [8.50, -4, 'i'], [8.62, 20, 'o'], [8.82, -2]]);
+const LEGLEN_F = T([[7.38, 1], [7.54, .78], [7.58, 1, 'o5'], [7.72, .94], [7.86, .8], [7.98, 1], [8.24, .76], [8.50, 1]]);
+const FALL = T([[8.32, 0], [8.52, 1, 'i'], [9.62, 1, 'l'], [9.621, 0, 'l'], [10, 0]]);
+const HOP = T([[7.48, 0], [7.58, -32, 'o'], [7.64, -32, 'l'], [7.76, 0, 'i'], [7.78, 0, 'l'], [7.86, -11, 'o'], [7.98, 0, 'i']]);
+
+// free arms (raise angle: 0 down, 90 forward, 180 up)
+const ARM_F = T([[5.15, 60], [5.32, 14], [5.48, 12], [5.64, 124], [5.84, 154, 'l'], [5.96, 22], [6.12, 34], [6.40, 34, 'l'],
+  [6.56, 8], [7.06, 8, 'l'], [7.38, 60], [7.52, -38], [7.58, -18, 'o5'], [7.64, -18, 'l'], [7.76, 20], [7.86, 150, 'o'],
+  [8.06, 70], [8.24, 26], [8.50, 60, 'i'], [8.64, 22, 'o'], [8.84, 10]]);
+const ARM_B = T([[5.15, 60], [5.32, 10], [5.48, 8], [5.80, 14], [6.12, 30], [6.40, 30, 'l'], [6.56, 6], [7.06, 6, 'l'],
+  [7.38, 60], [7.52, 116], [7.58, 92, 'o5'], [7.64, 92, 'l'], [7.76, 30], [7.86, 140, 'o'], [8.06, 50], [8.24, 18],
+  [8.50, 40, 'i'], [8.64, -12, 'o'], [8.84, -4]]);
+
+const TILT = T([[0, 0], [0.24, -5], [0.40, 4, 'o'], [4.62, 8], [4.70, 18, 'o'], [4.86, 6], [5.15, 8], [5.36, -8], [5.50, 10],
+  [5.66, 32], [5.84, 26], [5.95, 10], [6.12, 20], [6.40, 18, 'l'], [6.56, 0], [6.62, 10], [6.86, 10, 'l'], [6.96, 0],
+  [7.10, 0, 'l'], [7.18, 12], [7.52, -12], [7.58, 10, 'o5'], [7.64, 10, 'l'], [7.76, 0], [7.86, -12, 'o'], [8.06, 0],
+  [8.26, 14], [8.52, -6, 'i'], [8.62, 10, 'o'], [8.78, -3], [8.92, 0], [9.62, 0, 'h'], [10, 0]]);
+const FACE_X = T([[0, 7], [6.86, 7, 'l'], [6.96, 0], [7.10, 0, 'l'], [7.18, 7], [9.62, 7, 'h'], [10, 7]]);
+const PUP_X = T([[0, 2.4], [4.62, 2.4, 'l'], [5.36, 1], [5.95, 1.5], [6.56, 2], [6.62, 3.1], [6.86, 3.1, 'l'], [6.96, 0],
+  [7.10, 0, 'l'], [7.18, 2.6], [7.86, 0], [9.62, 2.4, 'h'], [10, 2.4]]);
+const PUP_Y = T([[0, .5], [4.62, .5, 'l'], [5.36, -1.5], [5.95, 1], [6.56, .5], [6.62, 2.6], [6.86, 2.6, 'l'], [6.96, 0],
+  [7.10, 0, 'l'], [7.18, 1.2], [7.52, 1.8], [7.86, -1.5], [9.62, .5, 'h'], [10, .5]]);
+const LID = T([[0, .1], [0.06, .1, 'l'], [0.12, 1, 'o'], [0.20, .1], [2.40, .08, 'l'], [3.20, .3], [4.62, .36],
+  [4.68, .08, 'o'], [4.80, .62], [5.15, .58, 'l'], [5.36, .42], [5.62, .78], [5.95, .52], [6.40, .52, 'l'], [6.56, .32],
+  [6.86, .42], [6.92, 1, 'o'], [7.00, .42], [7.10, .42, 'l'], [7.18, .64], [7.38, .62, 'l'], [7.52, .46], [7.58, .74, 'o5'],
+  [7.64, .74, 'l'], [7.76, .3], [7.84, 0, 'o'], [8.06, .2], [8.30, .62], [8.50, .92], [8.60, 1], [9.62, .1, 'h'], [10, .1]]);
+const BROW = T([[0, -3], [0.40, -12], [2.40, -10, 'l'], [3.20, 15], [4.62, 18], [4.68, -16, 'o'], [4.80, 20], [5.15, 20, 'l'],
+  [5.36, -12], [5.95, -12, 'l'], [6.40, -15], [6.56, 0], [7.10, 0, 'l'], [7.18, 24, 'o'], [7.64, 27, 'l'], [7.78, 27, 'l'],
+  [7.84, -20, 'o'], [8.06, -10], [8.30, -15], [9.62, -3, 'h'], [10, -3]]);
+// mouth states with short crossfades
+const MOUTH = [[0, 'smile'], [3.00, 'grit'], [4.66, 'o'], [4.76, 'grit'], [5.26, 'open'], [6.48, 'flat'], [7.14, 'grit'],
+  [7.80, 'o'], [8.24, 'open'], [8.58, 'o'], [9.62, 'smile']];
+const MOUTH_IDS = ['smile', 'grit', 'open', 'flat', 'o'];
+// sweat visibility windows
+const SWEAT = T([[3.10, 0], [3.40, 1], [5.70, 1, 'l'], [5.76, 0, 'o'], [7.10, 0, 'l'], [7.24, 1], [7.86, 1, 'l'], [8.0, 0]]);
+
+// fades and UI
+const WORKER_A = T([[FADE_OUT, 1], [9.58, 0], [RESET, 0, 'l'], [10, 1, 'o']]);
+const FILL_A = T([[FADE_OUT, 1], [9.58, 0], [RESET, 1, 'h']]);
+const OLD_A = T([[DONE, 1], [DONE + .18, 0, 'o'], [RESET, 0, 'l'], [10, 1, 'o']]);   // "Uploading", number
+const NEW_A = T([[DONE + .04, 0], [DONE + .28, 1, 'o'], [FADE_OUT, 1, 'l'], [9.58, 0]]); // "Uploaded", Done
+const CHECK = T([[DONE + .16, 0], [DONE + .42, 1, 'o']]);
+const VPOP = T([[POP, 99], [POP + .3, 100, 'ob']]);
+
+/* ---------- character kinematics ---------- */
+const rot = (x, y, deg) => { const r = deg * Math.PI / 180, c = Math.cos(r), s = Math.sin(r); return [x * c - y * s, x * s + y * c]; };
+// hand position (root coords, hip-relative to root origin at the feet) for an arm raise angle a
+function hand(sh, a, lean, sx, sy, hipH) {
+  const [ax, ay] = rot(0, ARM, -a);
+  const [bx, by] = rot((sh[0] + ax) * sx, (sh[1] + ay) * sy, lean);
+  return [bx, by - hipH];
+}
+// arm angle that puts the hand at height y (bisection; y decreases as a rises)
+function solveArm(sh, y, lean, sx, sy, hipH) {
+  let lo = -20, hi = 175;
+  for (let i = 0; i < 22; i++) {
+    const mid = (lo + hi) / 2;
+    if (hand(sh, mid, lean, sx, sy, hipH)[1] > y) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+function bodyPose(t) {
+  const lean = LEAN(t) + STRAIN(t) * 1.6 * Math.sin(t * 2 * Math.PI * 11);
+  const crouch = CROUCH(t);
+  const hipH = HIP - crouch;
+  const breath = BREATH(t) * Math.sin(t * 2 * Math.PI * 2.7);
+  const sy = 1 - crouch * 0.011 + breath * 0.035, sx = 1 + crouch * 0.008 - breath * 0.015;
+  const pushW = PUSHW(t);
+  const target = (TRACK_MID - FLOOR) / WS;
+  const aF = solveArm(SHOULDER_F, target, lean, sx, sy, hipH);
+  const aB = solveArm(SHOULDER_B, target - 4, lean, sx, sy, hipH);
+  const reach = hand(SHOULDER_F, aF, lean, sx, sy, hipH)[0];
+  const pushedX = edgeAt(t) - WS * (4 + reach);
+  return { lean, crouch, hipH, sx, sy, pushW, aF, aB, pushedX };
+}
+
+// free (not pushing) root positions are anchored to where he let go
+const C1 = bodyPose(5.15).pushedX, C2 = bodyPose(7.38).pushedX;
+const KICK_X = E99 - WS * (84 / 90 * 28 + 9.5);
+const FREE_X = T([[5.15, C1], [5.36, C1 - 15], [7.05, C1 - 15, 'l'], [7.17, C2], [7.38, C2, 'l'], [7.52, KICK_X - 9],
+  [7.58, KICK_X, 'o5'], [7.64, KICK_X, 'l'], [7.76, KICK_X - 8, 'o'], [9.62, KICK_X - 8, 'l']]);
+// at 0% he stands on the floor just behind the bar's start, inside the card, until the fill reaches his hands
+const MIN_X = 104;
+const rootXAt = t => { const b = bodyPose(t); return Math.max(MIN_X, lerp(FREE_X(t), b.pushedX, b.pushW)); };
+
+/* ---------- gait: integrate step phase from distance travelled ---------- */
+const GDT = 1 / 600, GN = Math.round(LOOP / GDT) + 2;
+const PHI = new Float32Array(GN), PHID = new Float32Array(GN);
+const steps = [];   // foot plants: {t, x, v}
+(() => {
+  let phi = 0.5, prevX = rootXAt(0);
+  for (let i = 0; i < GN; i++) {
+    const t = i * GDT;
+    const x = rootXAt(Math.min(t, LOOP));
+    const d = (x - prevX) / (STRIDE(t) * WS) + STRAIN(t) * 6.4 * GDT;
+    prevX = x;
+    const before = phi;
+    phi = t >= RESET ? 0.5 : phi + d;
+    PHI[i] = phi; PHID[i] = d / GDT;
+    if (t > 0.3 && t < RESET && Math.floor(phi) !== Math.floor(before) && LEGOW(t) < 0.5) {
+      steps.push({ t, x, v: Math.abs(d / GDT), strain: STRAIN(t) });
+    }
+  }
+})();
+const sample = (arr, t) => { const f = clamp(t, 0, LOOP) / GDT, i = Math.floor(f), u = f - i; return lerp(arr[i], arr[Math.min(i + 1, GN - 1)], u); };
+
+function footFor(t, idx, hipH, lean) {
+  const L = STRIDE(t), phi = sample(PHI, t) + idx, speed = Math.abs(sample(PHID, t));
+  const u = ((phi % 2) + 2) % 2;
+  let x, lift = 0;
+  if (u < 1) x = L / 2 - u * L;
+  else { const w = u - 1; x = -L / 2 + EASE.io(w) * L; lift = Math.sin(Math.PI * w) * LIFT(t) * clamp(speed / 3); }
+  x -= Math.max(0, lean) * 0.32 + (idx ? 2 : -2);
+  const ang = Math.atan2(x, hipH - lift) * 180 / Math.PI;
+  const len = Math.hypot(x, hipH - lift);
+  return { ang, len, lift };
+}
+
+/* ---------- DOM ---------- */
+const $ = id => document.getElementById(id);
+const el = {
+  card: $('card'), fill: $('fill'), track: $('track'), worker: $('worker'), root: $('root'), body: $('body'),
+  legF: $('legF'), legB: $('legB'), shoeF: $('shoeF'), shoeB: $('shoeB'), armF: $('armF'), armB: $('armB'),
+  headPivot: $('headPivot'), head: $('head'), face: $('face'), eyeB: $('eyeB'), eyeF: $('eyeF'),
+  pupB: $('pupB'), pupF: $('pupF'), lidB: $('lidB'), lidF: $('lidF'), eyeBOpen: $('eyeBOpen'), eyeFOpen: $('eyeFOpen'),
+  eyeBShut: $('eyeBShut'), eyeFShut: $('eyeFShut'), browB: $('browB'), browF: $('browF'),
+  mSmile: $('mSmile'), mGrit: $('mGrit'), mOpen: $('mOpen'), mFlat: $('mFlat'), mO: $('mO'),
+  sw: [$('sw0'), $('sw1'), $('sw2')], fly: $('flyDrop'), shadow: $('shadow'), puffs: $('puffs'),
+  c0: $('c0'), c1: $('c1'), c2: $('c2'), num: $('num'), done: $('done'), checkWipe: $('checkWipe'),
+  titleA: $('titleA'), titleB: $('titleB'), subA: $('subA'), subB: $('subB'), mb: $('mb'), eta: $('eta'),
+};
+const mouthEl = { smile: el.mSmile, grit: el.mGrit, open: el.mOpen, flat: el.mFlat, o: el.mO };
+
+const PUFFN = 16, puffEls = [];
+for (let i = 0; i < PUFFN; i++) {
+  const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  c.setAttribute('r', '1'); c.setAttribute('fill', '#cfcfd4'); c.setAttribute('opacity', '0');
+  el.puffs.appendChild(c); puffEls.push(c);
+}
+// dust: footfalls in the fast part, plus the landing when he collapses
+const puffs = steps.filter(s => s.t < 2.55 && s.v > 3).map((s, i) => { const r = rng(i + 3); return { t: s.t, x: s.x - 12 * WS - r() * 6, dir: -1, k: i, j: r(), h: r() }; });
+puffs.push({ t: 8.52, x: 0, dir: -1, k: 90, land: true }, { t: 8.53, x: 0, dir: 1, k: 91, land: true });
+
+const fmt = (v, n = 2) => +v.toFixed(n);
+const setT = (node, s) => node.setAttribute('transform', s);
+const setO = (node, o) => node.setAttribute('opacity', fmt(o, 3));
+
+function mouthWeights(t) {
+  let i = 0;
+  while (i + 1 < MOUTH.length && t >= MOUTH[i + 1][0]) i++;
+  const w = {}; MOUTH_IDS.forEach(k => (w[k] = 0));
+  const cur = MOUTH[i][1], prev = i > 0 ? MOUTH[i - 1][1] : MOUTH[MOUTH.length - 1][1];
+  const u = sstep(0, 0.07, t - MOUTH[i][0]);
+  w[cur] += u; w[prev] += 1 - u;
+  return w;
+}
+
+let lastText = '';
+function render(t) {
+  t = ((t % LOOP) + LOOP) % LOOP;
+  const b = bodyPose(t);
+  const freeX = FREE_X(t);
+  const rootX = Math.max(MIN_X, lerp(freeX, b.pushedX, b.pushW));
+  const p = progress(t);
+
+  /* card: nudge on the kick, settle bounce at Done */
+  const shake = damp(t, 7.58, 3.2, 13, 16);
+  const bounce = damp(t, DONE, 0.016, 2.6, 6.5);
+  el.card.style.transform = `translate3d(${fmt(shake)}px,0,0) scale(${fmt(SCALE * (1 + bounce), 5)})`;
+
+  /* bar */
+  setT(el.fill, `translate(${fmt(-TW * (1 - p / 100))} 0)`);
+  const bump = t >= POP ? 0.2 * Math.exp(-13 * (t - POP)) * Math.cos(2 * Math.PI * 5 * (t - POP)) * sstep(0, .02, t - POP) : 0;
+  setT(el.track, `translate(${TX + TW} ${TRACK_MID}) scale(${fmt(1 + bump * 0.02, 4)} ${fmt(1 + bump, 4)}) translate(${-(TX + TW)} ${-TRACK_MID})`);
+  setO(el.fill, FILL_A(t));
+
+  /* worker root: feet at the origin */
+  const fallE = FALL(t);
+  const impact = t > 8.52 ? -6 * Math.exp(-9 * (t - 8.52)) * Math.abs(Math.sin(15 * (t - 8.52))) : 0;
+  const tremble = STRAIN(t) * 0.9 * Math.sin(t * 2 * Math.PI * 23);
+  const lying = Math.sin(t * 2 * Math.PI * 1.1) * sstep(8.7, 9.0, t) * (t < RESET ? 1 : 0);
+  const rx = rootX + tremble, ry = FLOOR + impact;
+  setT(el.root, `translate(${fmt(rx)} ${fmt(ry)}) scale(${WS}) translate(0 ${fmt(HOP(t) - fallE * 28)}) rotate(${fmt(-88 * fallE)})`);
+  setO(el.worker, WORKER_A(t));
+
+  /* legs */
+  const legOW = LEGOW(t);
+  const legs = [[el.legF, el.shoeF, 0, LEG_F, LEGLEN_F], [el.legB, el.shoeB, 1, LEG_B, () => 1]];
+  for (const [leg, shoe, idx, A, LL] of legs) {
+    const g = footFor(t, idx, b.hipH, b.lean);
+    const ang = lerp(g.ang, A(t), legOW);
+    const len = lerp(g.len, HIP * LL(t) - b.crouch * 0.6, legOW);
+    setT(leg, `translate(0 ${fmt(-b.hipH)}) rotate(${fmt(-ang)}) scale(1 ${fmt(len / 28, 3)})`);
+    const r = ang * Math.PI / 180;
+    const fx = Math.sin(r) * len, fy = -b.hipH + Math.cos(r) * len;
+    const shoeRot = -ang * (0.22 + 0.78 * legOW) + (1 - legOW) * g.lift * 1.2;
+    setT(shoe, `translate(${fmt(fx)} ${fmt(fy + 2)}) rotate(${fmt(shoeRot)})`);
+  }
+
+  /* torso + arms */
+  setT(el.body, `translate(0 ${fmt(-b.hipH)}) rotate(${fmt(b.lean)}) scale(${fmt(b.sx, 4)} ${fmt(b.sy, 4)})`);
+  const flop = t > 8.52 ? 14 * Math.exp(-7 * (t - 8.58)) * Math.sin(2 * Math.PI * 2.2 * (t - 8.52)) : 0;
+  const aF = lerp(ARM_F(t), b.aF, b.pushW) + flop + lying * 3;
+  const aB = lerp(ARM_B(t), b.aB, b.pushW) - flop * 0.8;
+  setT(el.armF, `translate(${SHOULDER_F[0]} ${SHOULDER_F[1]}) rotate(${fmt(-aF)})`);
+  setT(el.armB, `translate(${SHOULDER_B[0]} ${SHOULDER_B[1]}) rotate(${fmt(-aB)})`);
+
+  /* head */
+  const headLag = t > 8.56 ? 7 * Math.exp(-8 * (t - 8.56)) * Math.sin(2 * Math.PI * 3 * (t - 8.56)) : 0;
+  const nod = damp(t, 4.62, 7, 4, 7);
+  const tilt = TILT(t) + headLag + nod;
+  const hsq = 1 + damp(t, POP, 0.05, 5, 9) + damp(t, 8.52, 0.07, 4, 8);
+  setT(el.headPivot, `translate(0 -46) rotate(${fmt(tilt)})`);
+  setT(el.head, `translate(0 -27) scale(${fmt(2 - hsq, 4)} ${fmt(hsq, 4)})`);
+
+  const fx = FACE_X(t);
+  setT(el.face, `translate(${fmt(fx)} 3)`);
+  const persp = fx / 7;   // 1 = three-quarter view, 0 = facing camera
+  setT(el.eyeB, `translate(${fmt(-11 + persp * 0.5)} -3) scale(${fmt(1 - 0.1 * persp, 3)} 1)`);
+  setT(el.eyeF, `translate(${fmt(11 - persp * 0.6)} -3)`);
+  const px = PUP_X(t), py = PUP_Y(t);
+  setT(el.pupB, `translate(${fmt(px * 0.9)} ${fmt(py)})`);
+  setT(el.pupF, `translate(${fmt(px)} ${fmt(py)})`);
+  const lid = LID(t);
+  setT(el.lidB, `translate(0 ${fmt(lid * 17.4)})`);
+  setT(el.lidF, `translate(0 ${fmt(lid * 17.4)})`);
+  const shut = sstep(0.86, 0.98, lid);
+  setO(el.eyeBOpen, 1 - shut); setO(el.eyeFOpen, 1 - shut);
+  setO(el.eyeBShut, shut); setO(el.eyeFShut, shut);
+  const brow = BROW(t), browY = -14.5 - Math.max(0, -brow) * 0.14 + Math.max(0, brow) * 0.05;
+  setT(el.browB, `translate(0 ${fmt(browY)}) rotate(${fmt(brow)})`);
+  setT(el.browF, `translate(0 ${fmt(browY)}) rotate(${fmt(-brow)})`);
+
+  const mw = mouthWeights(t);
+  const pant = 1 + 0.35 * Math.sin(t * 2 * Math.PI * 2.7) * BREATH(t);
+  for (const k of MOUTH_IDS) setO(mouthEl[k], mw[k]);
+  setT(el.mOpen, `translate(0 1) scale(1 ${fmt(pant, 3)}) translate(0 -1)`);
+
+  /* sweat: three drops on independent cycles */
+  const sw = SWEAT(t);
+  const spots = [[-22, -12], [20, -20], [-15, 6]];
+  el.sw.forEach((d, i) => {
+    const c = ((t + i * 0.31) / 0.95) % 1;
+    const a = sstep(0, 0.14, c) * (1 - sstep(0.78, 1, c)) * sw;
+    const s = 0.55 + 0.45 * sstep(0, 0.2, c);
+    setT(d, `translate(${spots[i][0]} ${fmt(spots[i][1] + EASE.i(c) * 9)}) scale(${fmt(s, 3)})`);
+    setO(d, a);
+  });
+
+  /* the drop flicked off during the wipe (scene coords) */
+  const fu = (t - 5.74) / 0.42;
+  if (fu > 0 && fu < 1) {
+    const x0 = rootX + 30 * WS, y0 = FLOOR - 112 * WS;
+    setT(el.fly, `translate(${fmt(x0 + 70 * fu)} ${fmt(y0 - 46 * fu + 150 * fu * fu)}) rotate(${fmt(40 + 120 * fu)})`);
+    setO(el.fly, 1 - sstep(0.75, 1, fu));
+  } else setO(el.fly, 0);
+
+  /* contact shadow: stretches with the lean, spreads when he lies down */
+  const lean = Math.max(0, b.lean);
+  const standRx = (25 + lean * 0.5) * WS, standCx = rootX + lean * 0.35 * WS;
+  const hop = -HOP(t);
+  const lieCx = rootX - 54 * WS, lieRx = 70 * WS;
+  const sCx = lerp(standCx, lieCx, fallE), sRx = lerp(standRx, lieRx, fallE) * (1 - hop * 0.012);
+  el.shadow.setAttribute('cx', fmt(sCx)); el.shadow.setAttribute('cy', FLOOR + 1);
+  el.shadow.setAttribute('rx', fmt(sRx)); el.shadow.setAttribute('ry', fmt(lerp(5.5, 7, fallE)));
+  setO(el.shadow, WORKER_A(t) * (1 - hop * 0.022));
+
+  /* dust puffs */
+  let n = 0;
+  for (const pf of puffs) {
+    const age = t - pf.t, life = pf.land ? 0.6 : 0.42;
+    if (age < 0 || age > life || n >= PUFFN) continue;
+    const u = age / life, e = EASE.o(u);
+    const r = pf.land ? 10 + e * 16 : (2.5 + pf.j * 2) + e * (6 + pf.j * 4);
+    const baseX = pf.land ? rootX - 54 * WS + pf.dir * 62 * WS : pf.x;
+    const node = puffEls[n++];
+    node.setAttribute('cx', fmt(baseX + pf.dir * e * (pf.land ? 30 : 10 + pf.h * 10)));
+    node.setAttribute('cy', fmt(FLOOR - 3 - e * (pf.land ? 10 : 8 + pf.h * 8)));
+    node.setAttribute('r', fmt(r));
+    setO(node, (pf.land ? 0.38 : 0.8) * (1 - u) * (1 - u) * sstep(0, 0.1, u));
+  }
+  for (; n < PUFFN; n++) setO(puffEls[n], 0);
+
+  /* rolling digits */
+  let v;
+  if (t >= RESET) v = 0;
+  else if (t >= POP) v = VPOP(t);
+  else { const k = Math.floor(p), f = p - k; v = k + EASE.o(clamp(f / 0.55)); }
+  const ones = v % 10;
+  const carry = Math.max(0, ones - 9);
+  const tens = Math.floor(v / 10) + carry;
+  const hund = Math.floor(v / 100) + (Math.floor(v / 10) % 10 === 9 ? carry : 0);
+  el.c0.style.transform = `translate3d(0,${fmt(-ones * 112)}px,0)`;
+  el.c1.style.transform = `translate3d(0,${fmt(-Math.min(tens, 11) * 112)}px,0)`;
+  el.c2.style.transform = `translate3d(0,${fmt(-Math.min(hund, 2) * 112)}px,0)`;
+
+  /* text swap: Uploading -> Done */
+  const oa = OLD_A(t), na = NEW_A(t);
+  el.num.style.opacity = fmt(oa, 3);
+  el.num.style.transform = `translate3d(0,${fmt((1 - oa) * (t < 9 ? -14 : 10))}px,0)`;
+  el.done.style.opacity = fmt(na, 3);
+  el.done.style.transform = `translate3d(0,${fmt((1 - na) * 14)}px,0) scale(${fmt(0.96 + 0.04 * na, 4)})`;
+  el.checkWipe.setAttribute('transform', `scale(${fmt(CHECK(t), 4)} 1)`);
+  el.titleA.style.opacity = el.subA.style.opacity = fmt(oa, 3);
+  el.titleB.style.opacity = el.subB.style.opacity = fmt(na, 3);
+  el.titleB.style.transform = el.subB.style.transform = `translate3d(0,${fmt((1 - na) * 6)}px,0)`;
+
+  const shown = Math.min(99, Math.floor(p + 1e-6));
+  let text;
+  if (t < 0.5 || t >= RESET) text = '0|Calculating…';
+  else {
+    const secs = Math.max(1, Math.ceil((99 - shown) / 20));
+    text = (64 * shown / 100).toFixed(1) + '|About ' + secs + (secs === 1 ? ' second left' : ' seconds left');
+  }
+  if (text !== lastText) {
+    lastText = text;
+    const [a, c] = text.split('|');
+    el.mb.textContent = a; el.eta.textContent = c;
+  }
+}
+
+/* ---------- layout: card ~70% of the frame width ---------- */
+let SCALE = 1;
+function fit() {
+  const w = innerWidth, h = innerHeight;
+  SCALE = Math.min((w < 720 ? 0.92 : 0.70) * w / 1000, 0.78 * h / 540);
+  document.documentElement.style.setProperty('--s', SCALE.toFixed(4));
+}
+addEventListener('resize', fit);
+fit();
+
+/* ------------------------------------------------------------------ *
+ *  Sound. All synthesized with Web Audio; one event list drives both
+ *  live playback and the offline render used for the recording.
+ * ------------------------------------------------------------------ */
+
+const EVENTS = [];
+steps.forEach((s, i) => {
+  if (s.t > 4.66 && s.t < 5.2 || s.t > 7.18 && s.t < 7.4) EVENTS.push({ t: s.t, k: 'step', v: 0.5, seed: i });
+  else if (s.v > 0.8) EVENTS.push({ t: s.t, k: 'step', v: s.t < 2.5 ? 0.62 : 0.85, seed: i });
+});
+EVENTS.push(
+  { t: 4.70, k: 'hmph', pitch: 1.0, len: 0.17 },
+  { t: 5.00, k: 'hmph', pitch: 1.06, len: 0.15 },
+  { t: 5.38, k: 'hmph', pitch: 0.86, len: 0.34, breathy: 1 },
+  { t: 7.19, k: 'hmph', pitch: 1.18, len: 0.16 },
+  { t: 7.58, k: 'thud', v: 1 },
+  { t: POP, k: 'pop' },
+  { t: 8.52, k: 'flop' },
+  { t: 8.66, k: 'hmph', pitch: 0.78, len: 0.55, breathy: 1 },
+);
+EVENTS.sort((a, b) => a.t - b.t);
+
+function makeNoise(ctx) {
+  const len = ctx.sampleRate * 1.5, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0), r = rng(7);
+  for (let i = 0; i < len; i++) d[i] = r() * 2 - 1;
+  return buf;
+}
+function envGain(ctx, t, attack, peak, decay) {
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(peak, t + attack);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + attack + decay);
+  return g;
+}
+function noiseSrc(ctx, noise, t, dur, offset = 0) {
+  const s = ctx.createBufferSource(); s.buffer = noise;
+  s.start(t, offset % 1.2, dur); return s;
+}
+const SFX = {
+  step(ctx, out, noise, t, e) {
+    const r = rng(e.seed + 11), v = e.v;
+    const n = noiseSrc(ctx, noise, t, 0.08, r());
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900 + r() * 500; bp.Q.value = 0.9;
+    n.connect(bp).connect(envGain(ctx, t, 0.003, 0.11 * v, 0.06)).connect(out);
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(150 + r() * 25, t); o.frequency.exponentialRampToValueAtTime(58, t + 0.07);
+    o.connect(envGain(ctx, t, 0.002, 0.16 * v, 0.08)).connect(out);
+    o.start(t); o.stop(t + 0.12);
+  },
+  hmph(ctx, out, noise, t, e) {
+    const p = e.pitch, len = e.len;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.Q.value = 3;
+    lp.frequency.setValueAtTime(2300, t); lp.frequency.exponentialRampToValueAtTime(420, t + len + 0.05);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.15, t + (e.breathy ? 0.05 : 0.014));
+    g.gain.setValueAtTime(0.13, t + len * 0.55);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + len + 0.08);
+    lp.connect(g).connect(out);
+    for (const [type, mul, gain] of [['sawtooth', 1, 0.7], ['triangle', 0.5, 0.9]]) {
+      const o = ctx.createOscillator(); o.type = type;
+      o.frequency.setValueAtTime(205 * p * mul, t);
+      o.frequency.exponentialRampToValueAtTime(122 * p * mul, t + len);
+      const og = ctx.createGain(); og.gain.value = gain;
+      o.connect(og).connect(lp); o.start(t); o.stop(t + len + 0.12);
+    }
+    const n = noiseSrc(ctx, noise, t, len + 0.1, p);
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1400;
+    n.connect(hp).connect(envGain(ctx, t, 0.006, e.breathy ? 0.07 : 0.045, e.breathy ? len : 0.07)).connect(out);
+  },
+  thud(ctx, out, noise, t, e) {
+    const v = e.v || 1;
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(125, t); o.frequency.exponentialRampToValueAtTime(40, t + 0.22);
+    o.connect(envGain(ctx, t, 0.003, 0.62 * v, 0.34)).connect(out); o.start(t); o.stop(t + 0.4);
+    const k = ctx.createOscillator(); k.type = 'triangle';
+    k.frequency.setValueAtTime(270, t); k.frequency.exponentialRampToValueAtTime(190, t + 0.06);
+    k.connect(envGain(ctx, t, 0.001, 0.09 * v, 0.08)).connect(out); k.start(t); k.stop(t + 0.12);
+    const n = noiseSrc(ctx, noise, t, 0.1, 0.3);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1100;
+    n.connect(lp).connect(envGain(ctx, t, 0.001, 0.32 * v, 0.05)).connect(out);
+  },
+  pop(ctx, out, noise, t) {
+    const o = ctx.createOscillator(); o.type = 'sine';
+    o.frequency.setValueAtTime(260, t); o.frequency.exponentialRampToValueAtTime(1150, t + 0.035);
+    o.connect(envGain(ctx, t, 0.002, 0.42, 0.13)).connect(out); o.start(t); o.stop(t + 0.2);
+    const tick = ctx.createOscillator(); tick.type = 'sine'; tick.frequency.value = 2600;
+    tick.connect(envGain(ctx, t, 0.001, 0.05, 0.03)).connect(out); tick.start(t); tick.stop(t + 0.06);
+    [[783.99, 0.035, 0.012], [1046.5, 0.05, 0.03], [1567.98, 0.03, 0.05]].forEach(([f, g, d]) => {
+      const s = ctx.createOscillator(); s.type = 'sine'; s.frequency.value = f;
+      s.connect(envGain(ctx, t + d, 0.006, g, 0.75)).connect(out); s.start(t + d); s.stop(t + d + 0.8);
+    });
+  },
+  flop(ctx, out, noise, t) {
+    SFX.thud(ctx, out, noise, t, { v: 0.42 });
+    const n = noiseSrc(ctx, noise, t, 0.18, 0.7);
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 420;
+    n.connect(lp).connect(envGain(ctx, t, 0.004, 0.22, 0.14)).connect(out);
+  },
+};
+function buildBus(ctx) {
+  const comp = ctx.createDynamicsCompressor();
+  comp.threshold.value = -16; comp.knee.value = 8; comp.ratio.value = 3; comp.attack.value = 0.003; comp.release.value = 0.15;
+  const master = ctx.createGain(); master.gain.value = 0.9;
+  comp.connect(master).connect(ctx.destination);
+  return { input: comp, master };
+}
+const play = (ctx, bus, noise, e, when) => SFX[e.k](ctx, bus.input, noise, when, e);
+
+// offline render of one loop, for the recording
+window.__audioWav = async () => {
+  const sr = 48000, ctx = new OfflineAudioContext(2, sr * LOOP, sr);
+  const bus = buildBus(ctx), noise = makeNoise(ctx);
+  for (const e of EVENTS) play(ctx, bus, noise, e, e.t);
+  const buf = await ctx.startRendering();
+  const L = buf.getChannelData(0), R = buf.getChannelData(1), n = L.length;
+  const out = new DataView(new ArrayBuffer(44 + n * 4));
+  const w = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  w(0, 'RIFF'); out.setUint32(4, 36 + n * 4, true); w(8, 'WAVE'); w(12, 'fmt ');
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, 2, true);
+  out.setUint32(24, sr, true); out.setUint32(28, sr * 4, true); out.setUint16(32, 4, true); out.setUint16(34, 16, true);
+  w(36, 'data'); out.setUint32(40, n * 4, true);
+  for (let i = 0; i < n; i++) {
+    out.setInt16(44 + i * 4, clamp(L[i], -1, 1) * 32767, true);
+    out.setInt16(46 + i * 4, clamp(R[i], -1, 1) * 32767, true);
+  }
+  const bytes = new Uint8Array(out.buffer); let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+};
+window.__render = render;
+
+if (CAPTURE) {
+  render(+(qs.get('t') || 0));
+  document.fonts.ready.then(() => { render(+(qs.get('t') || 0)); window.__ready = true; });
+  return;
+}
+
+/* ---------- live playback ---------- */
+const AC = window.AudioContext || window.webkitAudioContext;
+let ctx = null, bus = null, noise = null, muted = false;
+const scheduled = new Set();
+function ensureAudio() {
+  if (!ctx && AC) { ctx = new AC({ latencyHint: 'interactive' }); bus = buildBus(ctx); noise = makeNoise(ctx); }
+  if (ctx && ctx.state === 'suspended') ctx.resume();
+}
+ensureAudio();   // starts at once where the browser allows it, otherwise on the first touch
+const unlock = () => ensureAudio();
+addEventListener('pointerdown', unlock, { passive: true });
+addEventListener('keydown', unlock);
+
+const btn = document.getElementById('mute');
+btn.addEventListener('click', () => {
+  // the first press only unlocks audio that the browser held back, so sound stays on
+  if (ctx && ctx.state !== 'running' && !muted) { ensureAudio(); return; }
+  muted = !muted;
+  btn.setAttribute('aria-pressed', String(muted));
+  btn.setAttribute('aria-label', muted ? 'Unmute sound' : 'Mute sound');
+  if (bus) bus.master.gain.setTargetAtTime(muted ? 0 : 0.9, ctx.currentTime, 0.015);
+});
+
+const t0 = performance.now();
+function frame(now) {
+  const elapsed = (now - t0) / 1000;
+  const t = elapsed % LOOP;
+  render(t);
+  if (ctx && ctx.state === 'running') {
+    const cycle = Math.floor(elapsed / LOOP), ahead = 0.12;
+    for (let c = cycle; c <= cycle + 1; c++) {
+      for (let i = 0; i < EVENTS.length; i++) {
+        const at = c * LOOP + EVENTS[i].t - elapsed;
+        if (at < -0.01 || at > ahead) continue;
+        const key = c * 1000 + i;
+        if (scheduled.has(key)) continue;
+        scheduled.add(key);
+        play(ctx, bus, noise, EVENTS[i], ctx.currentTime + Math.max(0, at));
+      }
+    }
+    if (scheduled.size > 400) for (const k of scheduled) if (k < (cycle - 1) * 1000) scheduled.delete(k);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
